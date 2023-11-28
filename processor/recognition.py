@@ -20,6 +20,7 @@ from .processor import Processor
 
 def weights_init(m):
     classname = m.__class__.__name__
+    # 权重初始化为均值为0，方差为0.02；偏差初始化为0
     if classname.find('Conv1d') != -1:
         m.weight.data.normal_(0.0, 0.02)
         if m.bias is not None:
@@ -60,7 +61,9 @@ class REC_Processor(Processor):
             raise ValueError()
 
     def adjust_lr(self):
+        # 阶段性调整学习率
         if self.arg.optimizer == 'SGD' and self.arg.step:
+            # 学习率越来越小，且小得越来越快
             lr = self.arg.base_lr * (
                 0.1**np.sum(self.meta_info['epoch']>= np.array(self.arg.step)))
             for param_group in self.optimizer.param_groups:
@@ -71,38 +74,47 @@ class REC_Processor(Processor):
 
     def show_topk(self, k):
         rank = self.result.argsort()
+        # bool数组，指出了最后k个类别中有几个预测正确了？TODO
         hit_top_k = [l in rank[i, -k:] for i, l in enumerate(self.label)]
         accuracy = sum(hit_top_k) * 1.0 / len(hit_top_k)
         self.io.print_log('\tTop{}: {:.2f}%'.format(k, 100 * accuracy))
 
+    # 训练一个epoch
     def train(self):
+        # 将模型切换到训练模式
         self.model.train()
+        # 更新学习率
         self.adjust_lr()
         loader = self.data_loader['train']
         loss_value = []
 
+        # 逐个batch进行训练
         for data, label in loader:
-
             # get data
+            # 获取训练数据与标签，置于目标设备中
             data = data.float().to(self.dev)
             label = label.long().to(self.dev)
 
             # forward
+            # 前向计算并计算损失
             output = self.model(data)
             loss = self.loss(output, label)
 
             # backward
+            # 清除梯度记录，开始反向传播，再更新参数
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
             # statistics
+            # 记录本batch中的损失、使用的学习率
             self.iter_info['loss'] = loss.data.item()
             self.iter_info['lr'] = '{:.6f}'.format(self.lr)
             loss_value.append(self.iter_info['loss'])
             self.show_iter_info()
             self.meta_info['iter'] += 1
 
+        # 计算本epoch的平均损失
         self.epoch_info['mean_loss']= np.mean(loss_value)
         self.show_epoch_info()
         self.io.print_timer()
@@ -118,23 +130,30 @@ class REC_Processor(Processor):
         for data, label in loader:
             
             # get data
+            # 获取训练数据与标签，置于目标设备中
             data = data.float().to(self.dev)
             label = label.long().to(self.dev)
 
             # inference
+            # 在测试集上进行推理
             with torch.no_grad():
                 output = self.model(data)
+            # 模型的原始输出
             result_frag.append(output.data.cpu().numpy())
 
             # get loss
+            # 评估开启时才计算损失
             if evaluation:
                 loss = self.loss(output, label)
                 loss_value.append(loss.item())
                 label_frag.append(label.data.cpu().numpy())
 
+        # 拼接在整个测试集上模型的输出结果
         self.result = np.concatenate(result_frag)
+
         if evaluation:
             self.label = np.concatenate(label_frag)
+            # 整个测试集上的平均损失
             self.epoch_info['mean_loss']= np.mean(loss_value)
             self.show_epoch_info()
 

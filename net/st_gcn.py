@@ -32,14 +32,21 @@ class Model(nn.Module):
 
         # load graph
         self.graph = Graph(**graph_args)
+        # 邻接矩阵数组放入tensor
         A = torch.tensor(self.graph.A, dtype=torch.float32, requires_grad=False)
+        # 注册为buffer，会随模型的state_dict一起保存，通过self.A可以获得
         self.register_buffer('A', A)
 
         # build networks
+        # 空域图卷积核大小保持和邻接矩阵个数一样，即所有跳数下的各邻居分组的邻接矩阵
         spatial_kernel_size = A.size(0)
+        # 固定时域卷积大小（时间跨度范围）为9
         temporal_kernel_size = 9
+        # 保存时域卷积与空域卷积大小
         kernel_size = (temporal_kernel_size, spatial_kernel_size)
+        # 此BatchNorm1d用于原始数据BN
         self.data_bn = nn.BatchNorm1d(in_channels * A.size(1))
+        # st_gcn网络的第一层不使用dropout
         kwargs0 = {k: v for k, v in kwargs.items() if k != 'dropout'}
         self.st_gcn_networks = nn.ModuleList((
             st_gcn(in_channels, 64, kernel_size, 1, residual=False, **kwargs0),
@@ -55,6 +62,8 @@ class Model(nn.Module):
         ))
 
         # initialize parameters for edge importance weighting
+        # 考虑到各邻接节点的重要性是不同的，给予边一个可训练权重
+        # 可以注意到给st_gcn网络的每一层st_gcn都设置了一套单独的边权重
         if edge_importance_weighting:
             self.edge_importance = nn.ParameterList([
                 nn.Parameter(torch.ones(self.A.size()))
@@ -64,29 +73,40 @@ class Model(nn.Module):
             self.edge_importance = [1] * len(self.st_gcn_networks)
 
         # fcn for prediction
+        # 用于输出最终的分类类别
         self.fcn = nn.Conv2d(256, num_class, kernel_size=1)
 
     def forward(self, x):
 
         # data normalization
+        # 原始图序列输入
         N, C, T, V, M = x.size()
+        # 转换为(N, M, V, C, T)
         x = x.permute(0, 4, 3, 1, 2).contiguous()
+        # 做一次1d的BN，num_features为V*C，相当于跨当前batch中所有帧做标准化
         x = x.view(N * M, V * C, T)
         x = self.data_bn(x)
         x = x.view(N, M, V, C, T)
+        # 转换为(N,M,C,T,V)
         x = x.permute(0, 1, 3, 4, 2).contiguous()
+        # 转换成模型能接受的视图
         x = x.view(N * M, C, T, V)
 
         # forwad
+        # 顺着st_gcn网络进行计算，传入的是乘了权重的邻接矩阵
         for gcn, importance in zip(self.st_gcn_networks, self.edge_importance):
             x, _ = gcn(x, self.A * importance)
 
         # global pooling
+        # 每一个minibatch的每一个channel分别进行整体求平均，结果为(N*M,C,1,1)
         x = F.avg_pool2d(x, x.size()[2:])
+        # 对所有channel做平均，结果为(N,C,1,1)，准备进行最终的预测
         x = x.view(N, M, -1, 1, 1).mean(dim=1)
 
         # prediction
+        # fc层进行预测，结果为(N,num_class,1,1)
         x = self.fcn(x)
+        # 最终预测结果，N行num_class列，每一行代表一个minibatch的预测结果
         x = x.view(x.size(0), -1)
 
         return x
@@ -129,7 +149,7 @@ class st_gcn(nn.Module):
     Shape:
         - Input[0]: Input graph sequence in :math:`(N, in_channels, T_{in}, V)` format
         - Input[1]: Input graph adjacency matrix in :math:`(K, V, V)` format
-        - Output[0]: Outpu graph sequence in :math:`(N, out_channels, T_{out}, V)` format
+        - Output[0]: Output graph sequence in :math:`(N, out_channels, T_{out}, V)` format
         - Output[1]: Graph adjacency matrix for output data in :math:`(K, V, V)` format
 
         where
@@ -150,6 +170,7 @@ class st_gcn(nn.Module):
         super().__init__()
 
         assert len(kernel_size) == 2
+        # 保证时域卷积大小为奇数
         assert kernel_size[0] % 2 == 1
         padding = ((kernel_size[0] - 1) // 2, 0)
 
@@ -172,10 +193,8 @@ class st_gcn(nn.Module):
 
         if not residual:
             self.residual = lambda x: 0
-
         elif (in_channels == out_channels) and (stride == 1):
             self.residual = lambda x: x
-
         else:
             self.residual = nn.Sequential(
                 nn.Conv2d(

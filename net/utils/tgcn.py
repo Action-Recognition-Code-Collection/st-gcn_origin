@@ -44,6 +44,7 @@ class ConvTemporalGraphical(nn.Module):
                  bias=True):
         super().__init__()
 
+        # 空间卷积大小
         self.kernel_size = kernel_size
         self.conv = nn.Conv2d(
             in_channels,
@@ -57,10 +58,12 @@ class ConvTemporalGraphical(nn.Module):
     def forward(self, x, A):
         assert A.size(0) == self.kernel_size
 
+        # Conv2d卷的是时域
         x = self.conv(x)
 
         n, kc, t, v = x.size()
         x = x.view(n, self.kernel_size, kc//self.kernel_size, t, v)
+        # Einstein求和卷的是空域，对相邻信息做了一次聚合
         x = torch.einsum('nkctv,kvw->nctw', (x, A))
 
         return x.contiguous(), A

@@ -45,10 +45,13 @@ class Processor(IO):
         pass
 
     def load_data(self):
+        # 加载自定义DataSet类
         Feeder = import_class(self.arg.feeder)
+        # 若train_feeder_args中未指定debug参数，则与--debug保持一致
         if 'debug' not in self.arg.train_feeder_args:
             self.arg.train_feeder_args['debug'] = self.arg.debug
         self.data_loader = dict()
+        # --phase值为train或test
         if self.arg.phase == 'train':
             self.data_loader['train'] = torch.utils.data.DataLoader(
                 dataset=Feeder(**self.arg.train_feeder_args),
@@ -104,6 +107,7 @@ class Processor(IO):
         self.io.print_log('Parameters:\n{}\n'.format(str(vars(self.arg))))
 
         # training phase
+        # 根据参数phase决定是进行训练还是测试
         if self.arg.phase == 'train':
             for epoch in range(self.arg.start_epoch, self.arg.num_epoch):
                 self.meta_info['epoch'] = epoch
@@ -114,12 +118,14 @@ class Processor(IO):
                 self.io.print_log('Done.')
 
                 # save model
+                # 阶段性与完整后都进行保存
                 if ((epoch + 1) % self.arg.save_interval == 0) or (
                         epoch + 1 == self.arg.num_epoch):
                     filename = 'epoch{}_model.pt'.format(epoch + 1)
                     self.io.save_model(self.model, filename)
 
                 # evaluation
+                # 在测试集上推理一下，看看训练得怎么样了
                 if ((epoch + 1) % self.arg.eval_interval == 0) or (
                         epoch + 1 == self.arg.num_epoch):
                     self.io.print_log('Eval epoch: {}'.format(epoch))
@@ -127,19 +133,21 @@ class Processor(IO):
                     self.io.print_log('Done.')
         # test phase
         elif self.arg.phase == 'test':
-
             # the path of weights must be appointed
+            # 加载模型与参数
             if self.arg.weights is None:
                 raise ValueError('Please appoint --weights.')
             self.io.print_log('Model:   {}.'.format(self.arg.model))
             self.io.print_log('Weights: {}.'.format(self.arg.weights))
 
             # evaluation
+            # 直接在测试集上进行推理即可
             self.io.print_log('Evaluation Start:')
             self.test()
             self.io.print_log('Done.\n')
 
             # save the output of model
+            # 保存测试的结果，存的是模型在测试集上的原始输出
             if self.arg.save_result:
                 result_dict = dict(
                     zip(self.data_loader['test'].dataset.sample_name,
@@ -174,7 +182,7 @@ class Processor(IO):
 
         # feeder
         parser.add_argument('--feeder', default='feeder.feeder', help='data loader will be used')
-        parser.add_argument('--num_worker', type=int, default=4, help='the number of worker per gpu for data loader')
+        parser.add_argument('--num_worker', type=int, default=0, help='the number of worker per gpu for data loader')
         parser.add_argument('--train_feeder_args', action=DictAction, default=dict(), help='the arguments of data loader for training')
         parser.add_argument('--test_feeder_args', action=DictAction, default=dict(), help='the arguments of data loader for test')
         parser.add_argument('--batch_size', type=int, default=256, help='training batch size')

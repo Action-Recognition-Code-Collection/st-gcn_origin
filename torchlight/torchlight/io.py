@@ -49,25 +49,34 @@ class IO():
     #         pass
 
     def load_model(self, model, **model_args):
+        # 根据名称（e.g. net.st_gcn.Model）加载模型类
         Model = import_class(model)
+        # 实例化模型
         model = Model(**model_args)
         self.model_text += '\n\n' + str(model)
         return model
 
     def load_weights(self, model, weights_path, ignore_weights=None):
+        # 从参数--ignore_weights获取要忽略层次过滤器名称的列表，
+        # （某一层以指定名称开头时，就会被忽略）
         if ignore_weights is None:
             ignore_weights = []
         if isinstance(ignore_weights, str):
             ignore_weights = [ignore_weights]
 
         self.print_log('Load weights from {}.'.format(weights_path))
+        # 从文件加载参数后，做成OrderedDict。并且去掉参数层名称前缀的“module.”
+        # （save_weights中添加了该前缀）
         weights = torch.load(weights_path)
         weights = OrderedDict([[k.split('module.')[-1],
                                 v.cpu()] for k, v in weights.items()])
 
         # filter weights
+        # 逐个处理过滤器
         for i in ignore_weights:
+            # ignore_name存储要去除参数层的完整名称
             ignore_name = list()
+            # 以过滤器开头的参数层都会被移除
             for w in weights:
                 if w.find(i) == 0:
                     ignore_name.append(w)
@@ -75,16 +84,20 @@ class IO():
                 weights.pop(n)
                 self.print_log('Filter [{}] remove weights [{}].'.format(i,n))
 
+        # 此时weights中仅剩需要保留的参数层
         for w in weights:
             self.print_log('Load weights [{}].'.format(w))
 
+        # 加载参数
         try:
             model.load_state_dict(weights)
         except (KeyError, RuntimeError):
+            # 加载失败，输出缺失的参数层名称
             state = model.state_dict()
             diff = list(set(state.keys()).difference(set(weights.keys())))
             for d in diff:
                 self.print_log('Can not find weights [{}].'.format(d))
+            # 仅覆盖加载有的参数层，没有的保持不变
             state.update(weights)
             model.load_state_dict(state)
         return model
@@ -107,15 +120,18 @@ class IO():
         self.print_log('The model has been saved as {}.'.format(model_path))
 
     def save_arg(self, arg):
-
+        # 将参数作为配置文件进行保存，保存在work_dir/config.yaml中
         self.session_file = '{}/config.yaml'.format(self.work_dir)
 
         # save arg
+        # 获取parser中的所有信息
         arg_dict = vars(arg)
         if not os.path.exists(self.work_dir):
             os.makedirs(self.work_dir)
         with open(self.session_file, 'w') as f:
+            # 先写入最开始在终端中执行的命令（文件名与手打的所有参数）
             f.write('# command line: {}\n\n'.format(' '.join(sys.argv)))
+            # 将所有参数以yaml格式写入，包括手打的与指定配置文件中的
             yaml.dump(arg_dict, f, default_flow_style=False, indent=4)
 
     def print_log(self, str, print_time=True):
